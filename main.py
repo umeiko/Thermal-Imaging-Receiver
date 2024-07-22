@@ -9,6 +9,7 @@ from utils import *
 
 pygame.init()
 pygame.font.init()
+pygame.mouse.set_visible(False)
 FONT = pygame.font.Font(None, 25)  # 使用默认字体，大小为72
 SERIAL = serial.Serial()
 SERIAL.timeout = 2
@@ -92,7 +93,7 @@ def thread_serial():
                 # IMG_BUFFER = struct.unpack("<3f", IDENTIFY_BUFFER[5:-3])
                 # print(IMG_BUFFER)
             else:
-                IMG_BUFFER = b""
+                IMG_BUFFER = None
 
 def draw_func(surf, k, color):
     y = k  // 32
@@ -119,12 +120,12 @@ def draw_temp_cross(surf:pygame.Surface, pos, temp):
     x, y = pos
     x_diff = 5 if x < 570 else -45
     y_diff = 5 if y < 500 else -15
+
+    pygame.draw.line(surf, (255, 255, 255), (x-10, y), (x+10, y), 2)
+    pygame.draw.line(surf, (255, 255, 255), (x, y-10), (x, y+10), 2)
+    pygame.draw.line(surf, (0, 0, 0), (x-3, y), (x+3, y), 2)
+    pygame.draw.line(surf, (0, 0, 0), (x, y-3), (x, y+3), 2)
     if 530 > y > 50 and x < 640:
-        pygame.draw.line(surf, (255, 255, 255), (x-10, y), (x+10, y), 2)
-        pygame.draw.line(surf, (255, 255, 255), (x, y-10), (x, y+10), 2)
-        pygame.draw.line(surf, (0, 0, 0), (x-3, y), (x+3, y), 2)
-        pygame.draw.line(surf, (0, 0, 0), (x, y-3), (x, y+3), 2)
-        
         if isinstance(temp, float):
             text_surf = FONT.render(f"{temp:.2f}", True, (255, 255, 255), (0,0,0))
             surf.blit(text_surf, (x+x_diff, y+y_diff))
@@ -148,9 +149,15 @@ def main():
                                  pygame.Rect((0, 0), (200, 50)),
                                  manager, 
                                  anchors={  'left': 'left',
-                                            'right': 'right',
-                                            'top': 'top',
-                                            'bottom': 'bottom'})   
+                                            'top': 'top',}) 
+    
+    button_layout_rect = pygame.Rect((0, 0), (100, 50))
+    button_layout_rect.topleft = (200, 0)
+    button_save = pygame_gui.elements.UIButton(relative_rect=button_layout_rect, 
+                                               text='保存温度帧', 
+                                               manager=manager,
+                                               anchors={    'left': 'left',
+                                                            'top': 'top',})
     clock = pygame.time.Clock()
     is_running = True
     threading.Thread(target=thread_serial, daemon=True).start()
@@ -172,12 +179,21 @@ def main():
                 except Exception as e:
                     SERIAL.close()
                     port_list.set_disconnected()
+            elif event.type == pygame_gui.UI_BUTTON_PRESSED:
+                if event.ui_element == button_save:
+                    if IMG_BUFFER is not None:
+                        save_frame(IMG_BUFFER, window_surface)
+
+                    else:
+                        ERROR = '未连接串口'
             elif event.type == pygame.MOUSEMOTION:
                 mouse_pos = event.pos
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 if SERIAL.is_open:
                     if event.button == 1:
-                        test_points.append(event.pos)
+                        x, y = event.pos
+                        if 530 > y > 50 and x < 640:
+                            test_points.append(event.pos)
                     elif  event.button == 3:
                         if len(test_points) > 0:
                             test_points.pop()
@@ -188,7 +204,7 @@ def main():
         window_surface.blit(background, (0, 0))
         
         render(window_surface)
-        draw_temp_cross(window_surface, mouse_pos, get_temp(mouse_pos)[-1])
+        
         if ERROR is not None:
             SERIAL.close()
             port_list.set_disconnected()
@@ -198,6 +214,7 @@ def main():
             draw_temp_cross(window_surface, i, get_temp(i)[-1])
         
         manager.draw_ui(window_surface)
+        draw_temp_cross(window_surface, mouse_pos, get_temp(mouse_pos)[-1])
         if IMG_BUFFER:
             max_temp, min_temp, avg_temp = IMG_BUFFER[:3]
             pygame.display.set_caption(f'MAX: {max_temp:.2f}, MIN: {min_temp:.2f}, AVG: {avg_temp:.2f}')
