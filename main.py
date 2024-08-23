@@ -15,11 +15,20 @@ SERIAL = serial.Serial()
 SERIAL.timeout = 2
 IDENTIFY = queue.Queue(3)
 IMG_BUFFER = None
+REC = False
 IDENTIFY_BUFFER = b""
 ALIVE = True
 SCALE = 20
-ERROR = None
+REC_INTERVAL = 0.25
+MAX_REC_TIME = 3600 * 5
 
+ERROR = None
+DISPLAY_MODE = "SCALED"
+SURF_IMG = pygame.Surface((32*SCALE, 24*SCALE))
+REC_LAST_TIME = time.time()
+TIME_REC_LIST = []
+POINTS_REC_LIST = []
+REC_BEGIN_TIME = time.time()
 
 
 class Serial_Manager():
@@ -100,9 +109,18 @@ def draw_func(surf, k, color):
     x = k  %  32
     pygame.draw.rect(surf, color, (x*SCALE, (23-y)*SCALE+50, SCALE, SCALE))
 
-def render(surf, ):
+def draw_func2(surf:pygame.Surface, img_buffer:pygame.Surface):
+    surf.blit(img_buffer, (0, 0))
+
+
+def render(surf:pygame.Surface, ):
     if IMG_BUFFER:
-        draw_heatmap(IMG_BUFFER, lambda k, c: draw_func(surf, k, c))
+        if DISPLAY_MODE == "ORIGINAL":
+            draw_heatmap(IMG_BUFFER, lambda k, c: draw_func(surf, k, c))
+        else:
+        # draw_heatmap_upsample(IMG_BUFFER, lambda s: draw_func2(surf, s))
+            sur = draw_heatmap_upsample(IMG_BUFFER)
+            surf.blit(sur, (0, 50))
 
 def get_temp(pos):
     mx, my = pos
@@ -132,12 +150,41 @@ def draw_temp_cross(surf:pygame.Surface, pos, temp):
         # text_surf = FONT.render(f"{temp:.2f}℃", True, (255, 255, 255), (0,0,0))
         # surf.blit(text_surf, (x+50, y+50))
 
+def change_mode():
+    global DISPLAY_MODE
+    DISPLAY_MODE = "SCALED" if DISPLAY_MODE == "ORIGINAL" else "ORIGINAL"
+
+
+def rec_trigger():
+    global REC, TIME_REC_LIST, POINTS_REC_LIST, REC_BEGIN_TIME
+    if not SERIAL.is_open:
+        return None
+    if not REC:
+        REC = True
+        REC_BEGIN_TIME = time.time()
+    else:
+        REC = False
+        save_curv(TIME_REC_LIST, POINTS_REC_LIST)
+        TIME_REC_LIST = []
+        POINTS_REC_LIST = []
+
+def rec_loop(temps:list):
+    global REC, TIME_REC_LIST, POINTS_REC_LIST, REC_LAST_TIME
+    if REC:
+        now = time.time()
+        if now - REC_LAST_TIME > REC_INTERVAL:
+            TIME_REC_LIST.append(now - REC_BEGIN_TIME)
+            REC_LAST_TIME = now
+        # for temp in temps:
+            POINTS_REC_LIST.append(temps.copy())
+            
 
 def main():
     global ALIVE, ERROR
     mouse_pos = (0,0)
     test_points = []
-    pygame.display.set_caption('热成像监视器')
+    test_temps = []
+    msg = "热成像监视器"
     window_surface = pygame.display.set_mode((640, 530), pygame.RESIZABLE)
 
     background = pygame.Surface((640, 530))
@@ -158,16 +205,33 @@ def main():
                                                manager=manager,
                                                anchors={    'left': 'left',
                                                             'top': 'top',})
+    
+    button_layout_rect2 = pygame.Rect((0, 0), (150, 50))
+    button_layout_rect2.topright = (0, 0)
+    button_scale = pygame_gui.elements.UIButton(relative_rect=button_layout_rect2, 
+                                            text='双线性插值：开', 
+                                            manager=manager,
+                                            anchors={    'right': 'right',
+                                                        'top': 'top',})
+    button_layout_rect3 = pygame.Rect((0, 0), (80, 50))
+    button_layout_rect3.topright = (-150, 0)
+    button_rec = pygame_gui.elements.UIButton(relative_rect=button_layout_rect3, 
+                                            text='录制曲线', 
+                                            manager=manager,
+                                            anchors={   'right': 'right',
+                                                        'top': 'top',})
     clock = pygame.time.Clock()
     is_running = True
     threading.Thread(target=thread_serial, daemon=True).start()
 
-    while is_running:    
+    while is_running:
+        test_temps.clear()
         time_delta = clock.tick(60)/1000.0
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 is_running = False
                 ALIVE = False
+                rec_trigger()
             elif event.type == pygame_gui.UI_DROP_DOWN_MENU_CHANGED:
                 test_points.clear()
                 try:
@@ -176,20 +240,38 @@ def main():
                     SERIAL.port = port_list.dic_ports[event.text]
                     SERIAL.baudrate = 921600
                     SERIAL.open()
+                    msg = ""
                 except Exception as e:
                     SERIAL.close()
                     port_list.set_disconnected()
+                    msg = str(e)
             elif event.type == pygame_gui.UI_BUTTON_PRESSED:
                 if event.ui_element == button_save:
                     if IMG_BUFFER is not None:
                         save_frame(IMG_BUFFER, window_surface)
-
                     else:
                         ERROR = '未连接串口'
+                elif event.ui_element == button_scale:
+                    change_mode()
+                    if DISPLAY_MODE == "SCALED":
+                        button_scale.set_text('双线性插值：开')
+                    else:
+                        button_scale.set_text('双线性插值：关')
+                elif event.ui_element == button_rec:
+                    if len(test_points) == 0:
+                        msg = '请先选择测温点'
+                    else:
+                        rec_trigger()
+                        if REC:
+                            button_rec.set_text('结束录制')
+                            msg = '曲线录制中'
+                        else:
+                            button_rec.set_text('录制曲线')
+                            msg = '录制完成'
             elif event.type == pygame.MOUSEMOTION:
                 mouse_pos = event.pos
             elif event.type == pygame.MOUSEBUTTONDOWN:
-                if SERIAL.is_open:
+                if SERIAL.is_open and not REC:
                     if event.button == 1:
                         x, y = event.pos
                         if 530 > y > 50 and x < 640:
@@ -197,29 +279,38 @@ def main():
                     elif  event.button == 3:
                         if len(test_points) > 0:
                             test_points.pop()
-
+                elif not SERIAL.is_open:
+                    msg = '未连接串口'
+                elif REC:
+                    msg = '曲线录制中,结束后可添加测温点'
             manager.process_events(event)
 
         manager.update(time_delta)
         window_surface.blit(background, (0, 0))
         
         render(window_surface)
-        
+
         if ERROR is not None:
             SERIAL.close()
             port_list.set_disconnected()
+            msg = str(ERROR)
             ERROR = None
+            if REC:  # 关闭未结束的曲线录制
+                rec_trigger()
        
         for i in test_points:
-            draw_temp_cross(window_surface, i, get_temp(i)[-1])
-        
+            temp = get_temp(i)[-1]
+            draw_temp_cross(window_surface, i, temp)
+            test_temps.append(temp)
+
+        rec_loop(test_temps)
         manager.draw_ui(window_surface)
         draw_temp_cross(window_surface, mouse_pos, get_temp(mouse_pos)[-1])
         if IMG_BUFFER:
             max_temp, min_temp, avg_temp = IMG_BUFFER[:3]
-            pygame.display.set_caption(f'MAX: {max_temp:.2f}, MIN: {min_temp:.2f}, AVG: {avg_temp:.2f}')
+            pygame.display.set_caption(f'MAX: {max_temp:.2f}, MIN: {min_temp:.2f}, AVG: {avg_temp:.2f}, k: {get_temp(mouse_pos)[-2]} {msg}')
         else:
-            pygame.display.set_caption('热成像监视器')
+            pygame.display.set_caption(msg)
         pygame.display.update()
 
 if __name__ == '__main__':
