@@ -289,7 +289,7 @@ def main():
         window_surface.blit(background, (0, 0))
         
         render(window_surface)
-
+        draw_temp_cross(window_surface, mouse_pos, get_temp(mouse_pos)[-1])
         if ERROR is not None:
             SERIAL.close()
             port_list.set_disconnected()
@@ -305,6 +305,7 @@ def main():
 
         rec_loop(test_temps)
         manager.draw_ui(window_surface)
+        draw_temp_cross(window_surface, mouse_pos, get_temp(mouse_pos)[-1])
         draw_temp_cross(window_surface, mouse_pos, get_temp(mouse_pos)[-1])
         if IMG_BUFFER:
             max_temp, min_temp, avg_temp = IMG_BUFFER[:3]
