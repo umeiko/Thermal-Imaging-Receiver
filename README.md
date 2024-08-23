@@ -1,10 +1,11 @@
 # Thermal-Imaging-Receiver
-热成像接收器项目, [点此下载](https://github.com/umeiko/Thermal-Imaging-Receiver/releases/tag/Thermal-Receiver-v0.0.1)
+热成像接收器项目, [点此下载](https://github.com/umeiko/Thermal-Imaging-Receiver/releases/tag/v0.0.2)
 
 基于[pygame_gui](https://pygame-gui.readthedocs.io/en/latest/quick_start.html)完成, [演示视频在这里](https://www.bilibili.com/video/BV1tr421K7qp)
 可保存测温数据，提供温度矩阵数据，以及测温图像
 
-![image](https://github.com/user-attachments/assets/7b038145-cc2b-4249-b532-10f357a7ad7e)
+![image](https://github.com/user-attachments/assets/751f0325-7225-45a4-8a78-5884e1f0ba3f)
+
 
 
 - 用法
