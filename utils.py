@@ -126,7 +126,7 @@ def save_frame(matrix:list, surf:pygame.Surface):
 
 def save_curv(times:list, points_bytime:list):
     with open(f'curv_{time.strftime("%m-%d-%H-%M-%S")}.csv', 'w', encoding="utf-8") as f:
-        by_point = [[] for _ in range(len(times))]
+        # by_point = [[] for _ in range(len(times))]
         # for _time in times:
         #     f.write(f"{_time},")
         # f.write('\n')
@@ -134,8 +134,8 @@ def save_curv(times:list, points_bytime:list):
         #     for point in time_stamps:
         #         f.write(f"{point},")
         #     f.write('\n')
-        f.write("time(s),")
-        for i in range(len(points_bytime[0])):
+        f.write("time(s),max,")
+        for i in range(len(points_bytime[0])-1):
             f.write(f"point_{i},")
         f.write('\n')
         for t, time_stamps in enumerate(points_bytime):

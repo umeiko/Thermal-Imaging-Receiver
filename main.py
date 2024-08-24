@@ -186,7 +186,7 @@ def main():
     test_temps = []
     msg = "热成像监视器"
     window_surface = pygame.display.set_mode((640, 530), pygame.RESIZABLE)
-
+    max_temp, min_temp, avg_temp = 0, 0, 0
     background = pygame.Surface((640, 530))
     background.fill(pygame.Color('#000000'))
     manager = pygame_gui.UIManager((640, 530))
@@ -297,7 +297,14 @@ def main():
             ERROR = None
             if REC:  # 关闭未结束的曲线录制
                 rec_trigger()
-       
+        
+        if IMG_BUFFER:
+            max_temp, min_temp, avg_temp = IMG_BUFFER[:3]
+            pygame.display.set_caption(f'MAX: {max_temp:.2f}, MIN: {min_temp:.2f}, AVG: {avg_temp:.2f}, k: {get_temp(mouse_pos)[-2]} {msg}')
+        else:
+            pygame.display.set_caption(msg)
+        
+        test_temps.append(max_temp)
         for i in test_points:
             temp = get_temp(i)[-1]
             draw_temp_cross(window_surface, i, temp)
@@ -307,11 +314,7 @@ def main():
         manager.draw_ui(window_surface)
         draw_temp_cross(window_surface, mouse_pos, get_temp(mouse_pos)[-1])
         draw_temp_cross(window_surface, mouse_pos, get_temp(mouse_pos)[-1])
-        if IMG_BUFFER:
-            max_temp, min_temp, avg_temp = IMG_BUFFER[:3]
-            pygame.display.set_caption(f'MAX: {max_temp:.2f}, MIN: {min_temp:.2f}, AVG: {avg_temp:.2f}, k: {get_temp(mouse_pos)[-2]} {msg}')
-        else:
-            pygame.display.set_caption(msg)
+
         pygame.display.update()
 
 if __name__ == '__main__':
