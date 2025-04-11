@@ -1,5 +1,5 @@
 # Thermal-Imaging-Receiver
-热成像接收器项目, [点此下载](https://github.com/umeiko/Thermal-Imaging-Receiver/releases/tag/v0.0.2)
+热成像接收器项目, [点此下载](https://gitee.com/meiziyang2023/xtouchumeko-version-tutorial/releases/tag/rp2040%E7%83%AD%E6%88%90%E5%83%8F%E4%B8%8A%E4%BD%8D%E6%9C%BA)
 
 基于[pygame_gui](https://pygame-gui.readthedocs.io/en/latest/quick_start.html)完成, [演示视频在这里](https://www.bilibili.com/video/BV1tr421K7qp)
 可保存测温数据，提供温度矩阵数据，以及测温图像，可记录测温曲线。
@@ -10,4 +10,3 @@
   - 选择热成像仪的设备号
   - 鼠标左键可留下测温点
   - 鼠标右键清除测温点
-
