@@ -6,6 +6,7 @@ import threading
 import queue
 import struct
 from utils import *
+import cmaprgb
 
 pygame.init()
 pygame.font.init()
@@ -14,7 +15,7 @@ FONT = pygame.font.Font(None, 25)  # 使用默认字体，大小为72
 SERIAL = serial.Serial()
 SERIAL.timeout = 2
 IDENTIFY = queue.Queue(3)
-IMG_BUFFER = None
+DATA_BUFFER = None
 REC = False
 IDENTIFY_BUFFER = b""
 ALIVE = True
@@ -29,6 +30,14 @@ REC_LAST_TIME = time.time()
 TIME_REC_LIST = []
 POINTS_REC_LIST = []
 REC_BEGIN_TIME = time.time()
+LAST_FLAG_SEND = time.time()
+LOCK = threading.Lock()
+ORIG_SURF = pygame.Surface((32, 32))
+PIX_ARRAY = pygame.PixelArray(ORIG_SURF)
+CMAP_IDX = 0
+CMAP_STR_DICT = {
+    "经典":0,"明亮":1,"红热":2,"翠绿":3,"暗紫":4,"白热":5,"黑热":6
+}
 
 
 class Serial_Manager():
@@ -85,53 +94,76 @@ class myUIDropDownMenu(pygame_gui.elements.UIDropDownMenu):
             self.add_options([name])
 
 def thread_serial():
-    global IDENTIFY_BUFFER, ALIVE, SERIAL, IMG_BUFFER, ERROR
-    nums = []
+    global IDENTIFY_BUFFER, ALIVE, SERIAL, DATA_BUFFER, ERROR, LAST_FLAG_SEND
     while ALIVE:
         if SERIAL.is_open:
-            try:
-                IDENTIFY_BUFFER = SERIAL.read_until(b"END")
-                # IDENTIFY_BUFFER = SERIAL.read_all()
-            except Exception as e:
-                IDENTIFY_BUFFER = b""
-                ERROR = e
-            if b"BEGIN" in IDENTIFY_BUFFER and len(IDENTIFY_BUFFER) == 3092:
-            # if b"BEGIN" in IDENTIFY_BUFFER:
-                # print(IDENTIFY_BUFFER.index(b"BEGIN"), len(IDENTIFY_BUFFER))
-                IMG_BUFFER = struct.unpack("<771f", IDENTIFY_BUFFER[5:-3])
-                # IMG_BUFFER = struct.unpack("<3f", IDENTIFY_BUFFER[5:-3])
-                # print(IMG_BUFFER)
+            current_time = time.time()
+            if current_time - LAST_FLAG_SEND >= 0.5:
+                SERIAL.write(b"stream\n")
+                LAST_FLAG_SEND = current_time
+                time.sleep(0.1)
+            if SERIAL.is_open:
+                LOCK.acquire()
+                try:
+                    IDENTIFY_BUFFER = SERIAL.read_until(b"END")
+                except Exception as e:
+                    IDENTIFY_BUFFER = b""
+                    ERROR = e
+                if b"BEGIN" in IDENTIFY_BUFFER and len(IDENTIFY_BUFFER) == 2060:
+                    DATA_BUFFER = struct.unpack("<1026H", IDENTIFY_BUFFER[5: -3])
+                else:
+                    DATA_BUFFER = None
+                LOCK.release()
             else:
-                IMG_BUFFER = None
-
-def draw_func(surf, k, color):
-    y = k  // 32
-    x = k  %  32
-    pygame.draw.rect(surf, color, (x*SCALE, (23-y)*SCALE+50, SCALE, SCALE))
-
-def draw_func2(surf:pygame.Surface, img_buffer:pygame.Surface):
-    surf.blit(img_buffer, (0, 0))
+                ...
 
 
-def render(surf:pygame.Surface, ):
-    if IMG_BUFFER:
+def render():
+    if DATA_BUFFER:
+        draw_buffer = list(DATA_BUFFER)
         if DISPLAY_MODE == "ORIGINAL":
-            draw_heatmap(IMG_BUFFER, lambda k, c: draw_func(surf, k, c))
+            surf = pygame.Surface((640, 640))
+            t_max, t_min = draw_buffer[0], draw_buffer[1]
+            idx = 2
+            for i in range(32):
+                for j in range(32):
+                    value = int(180 * (draw_buffer[idx] - t_min) / (t_max - t_min))
+                    if value > 179: 
+                        value = 179
+                    elif value < 0:
+                        value = 0
+                    pygame.draw.rect(surf, cmaprgb.CMAPS[CMAP_IDX][value], pygame.Rect(i*20, j*20, 20, 20))
+                    idx += 1
+            surf = pygame.transform.rotate(surf, 90.)
         else:
-        # draw_heatmap_upsample(IMG_BUFFER, lambda s: draw_func2(surf, s))
-            sur = draw_heatmap_upsample(IMG_BUFFER)
-            surf.blit(sur, (0, 50))
+            surf = pygame.Surface((640, 640))
+            t_max, t_min = draw_buffer[0], draw_buffer[1]
+            idx = 2
+            for i in range(32):
+                for j in range(32):
+                    value = int(180 * (draw_buffer[idx] - t_min) / (t_max - t_min))
+                    if value > 179: 
+                        value = 179
+                    elif value < 0:
+                        value = 0
+                    PIX_ARRAY[i, j] = cmaprgb.CMAPS[CMAP_IDX][value]
+                    idx += 1
+            surf = pygame.transform.smoothscale(PIX_ARRAY.make_surface(), (640, 640))
+            surf = pygame.transform.rotate(surf, 90.)
+        return surf
 
 def get_temp(pos):
     mx, my = pos
     x = mx//SCALE
     x = x if x < 31 else 31
     x = x if x > 0 else 0
-    y = -(my-50)//SCALE+24
-    y = y if y < 23 else 23
+    y = -(my-50) // SCALE+31
+    y = y if y < 31 else 31
     y = y if y > 0 else 0
     k = y*32+x
-    tmp = IMG_BUFFER[k+3] if IMG_BUFFER else None
+    tmp = DATA_BUFFER[k+2] if DATA_BUFFER else None
+    if tmp is not None:
+        tmp = tmp / 10 - 273.15
     return x, y, k, tmp
 
 def draw_temp_cross(surf:pygame.Surface, pos, temp):
@@ -143,12 +175,10 @@ def draw_temp_cross(surf:pygame.Surface, pos, temp):
     pygame.draw.line(surf, (255, 255, 255), (x, y-10), (x, y+10), 2)
     pygame.draw.line(surf, (0, 0, 0), (x-3, y), (x+3, y), 2)
     pygame.draw.line(surf, (0, 0, 0), (x, y-3), (x, y+3), 2)
-    if 530 > y > 50 and x < 640:
+    if 690 > y > 50 and x < 640:
         if isinstance(temp, float):
             text_surf = FONT.render(f"{temp:.2f}", True, (255, 255, 255), (0,0,0))
             surf.blit(text_surf, (x+x_diff, y+y_diff))
-        # text_surf = FONT.render(f"{temp:.2f}℃", True, (255, 255, 255), (0,0,0))
-        # surf.blit(text_surf, (x+50, y+50))
 
 def change_mode():
     global DISPLAY_MODE
@@ -180,16 +210,16 @@ def rec_loop(temps:list):
             
 
 def main():
-    global ALIVE, ERROR
+    global ALIVE, ERROR, CMAP_IDX
     mouse_pos = (0,0)
     test_points = []
     test_temps = []
     msg = "热成像监视器"
-    window_surface = pygame.display.set_mode((640, 530), pygame.RESIZABLE)
-    max_temp, min_temp, avg_temp = 0, 0, 0
-    background = pygame.Surface((640, 530))
+    window_surface = pygame.display.set_mode((640, 690), pygame.RESIZABLE)
+    max_temp, min_temp = 0, 0
+    background = pygame.Surface((640, 690))
     background.fill(pygame.Color('#000000'))
-    manager = pygame_gui.UIManager((640, 530))
+    manager = pygame_gui.UIManager((640, 690))
     manager.set_locale('zh')
     # hello_list = pygame_gui.elements.UIDropDownMenu(["1","2","3"], "1", pygame.Rect((350, 275), (100, 50)),manager)
     port_list = myUIDropDownMenu(["断开连接"], "断开连接", 
@@ -205,6 +235,15 @@ def main():
                                                manager=manager,
                                                anchors={    'left': 'left',
                                                             'top': 'top',})
+    
+    button_layout_rect4 = pygame.Rect((0, 0), (100, 50))
+    button_layout_rect4.topleft = (300, 0)
+
+    cmap_list = pygame_gui.elements.UIDropDownMenu(["经典","明亮","红热","翠绿","暗紫","白热","黑热"], "经典", 
+                                 button_layout_rect4,
+                                 manager, 
+                                 anchors={  'left': 'left',
+                                            'top': 'top',}) 
     
     button_layout_rect2 = pygame.Rect((0, 0), (150, 50))
     button_layout_rect2.topright = (0, 0)
@@ -233,22 +272,28 @@ def main():
                 ALIVE = False
                 rec_trigger()
             elif event.type == pygame_gui.UI_DROP_DOWN_MENU_CHANGED:
-                test_points.clear()
-                try:
-                    if SERIAL.is_open:
+                if event.ui_element == port_list:
+                    test_points.clear()
+                    try:
+                        if SERIAL.is_open:
+                            SERIAL.close()
+                        SERIAL.port = port_list.dic_ports[event.text]
+                        SERIAL.baudrate = 921600
+                        SERIAL.open()
+                        SERIAL.write(b"stream\n")
+                        msg = ""
+                    except Exception as e:
                         SERIAL.close()
-                    SERIAL.port = port_list.dic_ports[event.text]
-                    SERIAL.baudrate = 921600
-                    SERIAL.open()
-                    msg = ""
-                except Exception as e:
-                    SERIAL.close()
-                    port_list.set_disconnected()
-                    msg = str(e)
+                        port_list.set_disconnected()
+                        msg = str(e)
+                elif event.ui_element == cmap_list:
+                    print(event.text)
+                    CMAP_IDX = CMAP_STR_DICT[event.text]
+
             elif event.type == pygame_gui.UI_BUTTON_PRESSED:
                 if event.ui_element == button_save:
-                    if IMG_BUFFER is not None:
-                        save_frame(IMG_BUFFER, window_surface)
+                    if DATA_BUFFER is not None:
+                        save_frame(DATA_BUFFER, window_surface)
                     else:
                         ERROR = '未连接串口'
                 elif event.ui_element == button_scale:
@@ -286,9 +331,14 @@ def main():
             manager.process_events(event)
 
         manager.update(time_delta)
-        window_surface.blit(background, (0, 0))
+        if SERIAL.is_open:
+            pygame.draw.rect(window_surface, (0, 0, 0), (0, 0, 640, 50))
+        else:
+            window_surface.blit(background, (0, 0))
         
-        render(window_surface)
+        if DATA_BUFFER is not None:
+            window_surface.blit(render(), (0, 50))
+ 
         draw_temp_cross(window_surface, mouse_pos, get_temp(mouse_pos)[-1])
         if ERROR is not None:
             SERIAL.close()
@@ -298,9 +348,9 @@ def main():
             if REC:  # 关闭未结束的曲线录制
                 rec_trigger()
         
-        if IMG_BUFFER:
-            max_temp, min_temp, avg_temp = IMG_BUFFER[:3]
-            pygame.display.set_caption(f'MAX: {max_temp:.2f}, MIN: {min_temp:.2f}, AVG: {avg_temp:.2f}, k: {get_temp(mouse_pos)[-2]} {msg}')
+        if DATA_BUFFER:
+            max_temp, min_temp = DATA_BUFFER[0] / 10 - 273.15, DATA_BUFFER[1] / 10 - 273.15
+            pygame.display.set_caption(f'MAX: {max_temp:.2f}, MIN: {min_temp:.2f}, k: {get_temp(mouse_pos)[-2]} {msg}')
         else:
             pygame.display.set_caption(msg)
         
