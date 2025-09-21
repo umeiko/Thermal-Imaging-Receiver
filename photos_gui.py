@@ -8,7 +8,7 @@ from PIL import Image, ImageTk
 import io
 import csv
 import serial.tools.list_ports
-import colormap
+import cmaprgb as colormap
 
 # 串口参数
 BIN_SIZE = 32 * 32 * 2  # 2048 字节
@@ -81,10 +81,46 @@ class ThermalBinLoader:
             side=tk.LEFT, padx=5)
         ttk.Button(self.btn_frame, text='删除文件', command=self.delete_file).pack(
             side=tk.LEFT, padx=5)
-
-        # 进度条
+                # 进度条
         self.progress = ttk.Progressbar(self.master, mode='determinate')
         self.progress.pack(fill=tk.X, padx=5, pady=5)
+        # 新增一键删除全部按钮
+        ttk.Button(self.btn_frame, text='一键删除全部', command=self.clear_all_photos).pack(
+            side=tk.LEFT, padx=5)
+        # 新增启动bootloader按钮
+        ttk.Button(self.btn_frame, text='启动bootloader', command=self.start_bootloader).pack(
+            side=tk.LEFT, padx=5)
+    def clear_all_photos(self):
+        """一键删除全部文件，发送 clear_photos 命令"""
+        if not self.serial or not self.serial.is_open:
+            messagebox.showerror('错误', '串口未连接')
+            return
+        if messagebox.askyesno('确认操作', '确定要删除全部图片吗？此操作不可恢复！'):
+            try:
+                self.serial.write(b'clear_photos\r\n')
+                response = self.serial.readline()
+                # 清除显示和文件列表
+                self.current_filename = None
+                self.current_image = None
+                self.canvas.delete('all')
+                threading.Thread(target=self.scan_files, daemon=True).start()
+            except Exception as e:
+                messagebox.showerror('操作失败', str(e))
+
+    def start_bootloader(self):
+        """启动bootloader，发送 bootloader 命令"""
+        if not self.serial or not self.serial.is_open:
+            messagebox.showerror('错误', '串口未连接')
+            return
+        if messagebox.askyesno('确认操作', '确定要启动bootloader吗？'):
+            try:
+                self.serial.write(b'bootloader\r\n')
+                response = self.serial.readline()
+                messagebox.showinfo('已发送', 'bootloader命令已发送')
+            except Exception as e:
+                messagebox.showerror('操作失败', str(e))
+
+
 
     def refresh_ports(self):
         """刷新可用串口列表"""
