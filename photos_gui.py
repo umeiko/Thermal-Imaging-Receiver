@@ -11,7 +11,9 @@ import serial.tools.list_ports
 import cmaprgb as colormap
 
 # 串口参数
-BIN_SIZE = 32 * 32 * 2  # 2048 字节
+BIN_SIZE_32x32 = 32 * 32 * 2  # 2048 字节（32x32 uint16）
+BIN_SIZE_24x32 = 24 * 32 * 4  # 3072 字节（24x32 float）
+BIN_SIZE_12x16 = 12 * 16 * 4  # 768 字节（12x16 float）
 BAUDRATE = 115200  # 固定波特率
 CMAP_NAMES = ['经典', '涡流', '热力', '蓝紫', '黑红', '灰度', '反灰度']
 CMAPS = [colormap.classicrgb, colormap.turborgb, colormap.hotrgb, 
@@ -22,7 +24,8 @@ class ThermalBinLoader:
         self.master = master
         self.master.title('热成像图像管理(最大100张)')
         self.file_list = []
-        self.bin_data = {}  # {filename: 32x32 ndarray}
+        self.bin_data = {}  # {filename: data_2d}
+        self.file_info = {}  # {filename: {'size': bytes, 'type': '32x32' or '24x32'}}
         self.current_image = None
         self.current_filename = None
         self.serial = None
@@ -148,15 +151,19 @@ class ThermalBinLoader:
             self.serial.write(b'ls\r\n')
             lines = self.serial.readlines()
             bin_files = []
+            file_sizes = {}  # 记录文件大小
             
             for line in lines:
                 line = line.decode(errors='ignore')
                 if 'File:' in line and line.strip().endswith('bytes'):  # 匹配格式 [FS] File: xxx.bin, Size: xxx bytes
                     try:
-                        # 提取文件名部分
+                        # 提取文件名和大小
                         fname = line.split('File:')[1].split(',')[0].strip()
+                        size_str = line.split('Size:')[1].split('bytes')[0].strip()
+                        size = int(size_str)
                         if fname.endswith('.bin'):
                             bin_files.append(fname)
+                            file_sizes[fname] = size
                     except:
                         continue
             
@@ -168,15 +175,34 @@ class ThermalBinLoader:
                 self.progress['value'] = (i / total_files) * 100
                 self.master.update_idletasks()
                 
+                file_size = file_sizes.get(fname, 0)
                 self.serial.write(f'cat {fname}\r\n'.encode())
                 prefix = self.serial.readline()
-                print("prefix:", prefix.decode())
-                data = self.serial.read(BIN_SIZE)
-                print("size:", len(data))
-                if len(data) == BIN_SIZE:
+                print(f"prefix: {prefix.decode()}")
+                data = self.serial.read(file_size)
+                print(f"received size: {len(data)}, expected: {file_size}")
+                
+                # 根据文件大小判断数据格式并解析
+                if file_size == BIN_SIZE_32x32 and len(data) == BIN_SIZE_32x32:
+                    # 32x32 uint16格式
                     arr = struct.unpack('<1024H', data)
                     arr2d = [arr[i*32:(i+1)*32] for i in range(32)]
                     self.bin_data[fname] = arr2d
+                    self.file_info[fname] = {'size': file_size, 'type': '32x32'}
+                elif file_size == BIN_SIZE_24x32 and len(data) == BIN_SIZE_24x32:
+                    # 24x32 float格式
+                    arr = struct.unpack('<768f', data)
+                    arr2d = [arr[i*32:(i+1)*32] for i in range(24)]
+                    self.bin_data[fname] = arr2d
+                    self.file_info[fname] = {'size': file_size, 'type': '24x32'}
+                elif file_size == BIN_SIZE_12x16 and len(data) == BIN_SIZE_12x16:
+                    # 12x16 float格式
+                    arr = struct.unpack('<192f', data)
+                    arr2d = [arr[i*16:(i+1)*16] for i in range(12)]
+                    self.bin_data[fname] = arr2d
+                    self.file_info[fname] = {'size': file_size, 'type': '12x16'}
+                else:
+                    print(f"Warning: Unknown data format for {fname} (size: {file_size})")
             
             self.progress['value'] = 100
             
@@ -218,8 +244,12 @@ class ThermalBinLoader:
         max_val = max(max(row) for row in arr2d)
         range_val = max_val - min_val if max_val > min_val else 1
         
+        # 获取原始尺寸（支持32x32和24x32）
+        height = len(arr2d)
+        width = len(arr2d[0]) if arr2d else 0
+        
         # 创建原始灰度图像
-        img = Image.new('L', (32, 32))
+        img = Image.new('L', (width, height))
         pixels = []
         for row in arr2d:
             for val in row:
@@ -228,7 +258,7 @@ class ThermalBinLoader:
                 pixels.append(norm_val)
         img.putdata(pixels)
         
-        # 双线性插值放大到240x240
+        # 双线性插值放大到320x320
         img = img.resize((320, 320), Image.BILINEAR)
         
         # 获取选中的色表
