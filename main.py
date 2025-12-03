@@ -91,16 +91,71 @@ def thread_serial():
         if SERIAL.is_open:
             try:
                 IDENTIFY_BUFFER = SERIAL.read_until(b"END")
-                # IDENTIFY_BUFFER = SERIAL.read_all()
             except Exception as e:
                 IDENTIFY_BUFFER = b""
                 ERROR = e
-            if b"BEGIN" in IDENTIFY_BUFFER and len(IDENTIFY_BUFFER) == 3092:
-            # if b"BEGIN" in IDENTIFY_BUFFER:
-                # print(IDENTIFY_BUFFER.index(b"BEGIN"), len(IDENTIFY_BUFFER))
-                IMG_BUFFER = struct.unpack("<771f", IDENTIFY_BUFFER[5:-3])
-                # IMG_BUFFER = struct.unpack("<3f", IDENTIFY_BUFFER[5:-3])
-                # print(IMG_BUFFER)
+
+            # 期望数据格式: b'BEGIN' + payload (n floats little-endian) + b'END'
+            if IDENTIFY_BUFFER.startswith(b"BEGIN") and IDENTIFY_BUFFER.endswith(b"END"):
+                payload = IDENTIFY_BUFFER[5:-3]
+                # payload 长度应为 4 的倍数
+                if len(payload) % 4 == 0 and len(payload) >= 12:  # 至少包含 3 个 float (12 bytes)
+                    num_floats = len(payload) // 4
+                    try:
+                        values = struct.unpack(f"<{num_floats}f", payload)
+                    except Exception as e:
+                        IMG_BUFFER = None
+                        ERROR = e
+                        continue
+
+                    # 假设前 3 个 float 是 max/min/avg，后面是像素数据
+                    if num_floats >= 3:
+                        header = values[:3]
+                        pixels = list(values[3:])
+                        src_pixel_count = len(pixels)
+
+                        # 原始 24x32: 24*32 = 768
+                        if src_pixel_count == 768:
+                            # 直接使用原始缓冲区（保持原有顺序）
+                            IMG_BUFFER = tuple(values)
+                            # print("[serial] received 24x32 frame (768 pixels)")
+                        elif src_pixel_count == 192:
+                            # 12x16 探头 -> 上采样到 24x32
+                            def upsample_bilinear(src, src_w, src_h, dst_w, dst_h):
+                                out = []
+                                for ty in range(dst_h):
+                                    y = ty * (src_h - 1) / (dst_h - 1)
+                                    y0 = int(y)
+                                    y1 = min(y0 + 1, src_h - 1)
+                                    wy = y - y0
+                                    for tx in range(dst_w):
+                                        x = tx * (src_w - 1) / (dst_w - 1)
+                                        x0 = int(x)
+                                        x1 = min(x0 + 1, src_w - 1)
+                                        wx = x - x0
+                                        v00 = src[y0 * src_w + x0]
+                                        v01 = src[y0 * src_w + x1]
+                                        v10 = src[y1 * src_w + x0]
+                                        v11 = src[y1 * src_w + x1]
+                                        val = (1 - wx) * (1 - wy) * v00 + wx * (1 - wy) * v01 + (1 - wx) * wy * v10 + wx * wy * v11
+                                        out.append(val)
+                                return out
+
+                            # 传感器实际为 16x12（宽16，高12），因此 src_w=16, src_h=12
+                            up_pixels = upsample_bilinear(pixels, 16, 12, 32, 24)
+                            IMG_BUFFER = tuple([header[0], header[1], header[2]] + up_pixels)
+                            # print(f"[serial] received 12x16 frame (192 pixels), upsampled to {len(up_pixels)} pixels")
+                            # 打印少量样本用于调试
+                            # print("[serial] header:", header)
+                            # print("[serial] src pixels sample:", pixels[:8])
+                            # print("[serial] upsample sample:", up_pixels[:8])
+                        else:
+                            # 未知像素数，忽略本帧
+                            IMG_BUFFER = None
+                    else:
+                        IMG_BUFFER = None
+                else:
+                    IMG_BUFFER = None
             else:
                 IMG_BUFFER = None
 
